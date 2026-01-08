@@ -2,9 +2,12 @@ package sp26.se194638.provider;
 
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.TypedQuery;
+import lombok.extern.slf4j.Slf4j;
 import org.keycloak.component.ComponentModel;
 import org.keycloak.credential.CredentialInput;
 import org.keycloak.credential.CredentialInputValidator;
+import org.keycloak.credential.hash.PasswordHashProvider;
+import org.keycloak.credential.hash.Pbkdf2PasswordHashProvider;
 import org.keycloak.models.*;
 import org.keycloak.models.credential.PasswordCredentialModel;
 import org.keycloak.storage.StorageId;
@@ -14,19 +17,21 @@ import org.keycloak.storage.user.UserQueryProvider;
 
 import lombok.Getter;
 import lombok.Setter;
+import org.mindrot.jbcrypt.BCrypt;
 import sp26.se194638.model.User;
 
 import java.util.Map;
 import java.util.Set;
 import java.util.stream.Stream;
 
+@Slf4j
 @Getter
 @Setter
 public class CustomerStorageProvider implements
         UserStorageProvider,
         UserLookupProvider,
         UserQueryProvider,
-        CredentialInputValidator {
+        CredentialInputValidator{
 
     private EntityManager em;
     private ComponentModel model;
@@ -58,7 +63,7 @@ public class CustomerStorageProvider implements
     @Override
     public UserModel getUserByUsername(RealmModel realm, String username) {
         TypedQuery<User> q = em.createQuery(
-                "select u from users u where u.username = :u", User.class);
+                "select u from User u where u.userName = :u", User.class);
         q.setParameter("u", username);
 
         return q.getResultStream()
@@ -75,7 +80,7 @@ public class CustomerStorageProvider implements
     @Override
     public UserModel getUserByEmail(RealmModel realm, String email) {
         TypedQuery<User> q = em.createQuery(
-                "select u from users u where u.email = :e", User.class);
+                "select u from User u where u.email = :e", User.class);
         q.setParameter("e", email);
 
         return q.getResultStream()
@@ -83,19 +88,6 @@ public class CustomerStorageProvider implements
                 .map(u -> new UserAdapter(session, realm, model, u))
                 .orElse(null);
     }
-
-    // ========= SEARCH (bắt buộc) =========
-
-    // @Override
-    // public Stream<UserModel> searchForUserStream(RealmModel realm, String search) {
-    //     return UserQueryProvider.super.searchForUserStream(realm, search);
-    // }
-
-    // @Override
-    // public Stream<UserModel> searchForUserStream(RealmModel realm, String search, Integer firstResult,
-    //         Integer maxResults) {
-    //     return UserQueryProvider.super.searchForUserStream(realm, search, firstResult, maxResults);
-    // }
 
     @Override
     public Stream<UserModel> searchForUserStream(RealmModel realm, Map<String, String> params) {
@@ -112,7 +104,7 @@ public class CustomerStorageProvider implements
         String search = params.getOrDefault("search", "");
 
         TypedQuery<User> q = em.createQuery(
-                "select u from users u where u.username like :s or u.email like :s",
+                "select u from User u where u.userName like :s or u.email like :s",
                 User.class);
         q.setParameter("s", "%" + search + "%");
 
@@ -172,15 +164,30 @@ public class CustomerStorageProvider implements
 
     @Override
     public boolean isValid(RealmModel realm, UserModel user, CredentialInput input) {
-        if (!supportsCredentialType(input.getType()))
+        if (!supportsCredentialType(input.getType())) {
             return false;
+        }
 
         Long userId = Long.valueOf(StorageId.externalId(user.getId()));
         User dbUser = em.find(User.class, userId);
 
-        return dbUser != null
-                && dbUser.getPassword() != null
-                && dbUser.getPassword().equals(input.getChallengeResponse());
+        if (dbUser == null || dbUser.getPassword() == null) {
+            return false;
+        }
+
+        PasswordHashProvider php =
+                session.getProvider(PasswordHashProvider.class, "bcrypt");
+
+        // tạo credential model từ password hash trong DB
+        PasswordCredentialModel pcm =
+                PasswordCredentialModel.createFromValues(
+                        "bcrypt",
+                        null,
+                        -1,
+                        dbUser.getPassword()
+                );
+
+        return php.verify(input.getChallengeResponse(), pcm);
     }
 
     @Override
@@ -208,16 +215,6 @@ public class CustomerStorageProvider implements
         return UserQueryProvider.super.getUsersCount(realm, groupIds);
     }
 
-    // @Override
-    // public int getUsersCount(RealmModel realm, String search) {
-    //     return UserQueryProvider.super.getUsersCount(realm, search);
-    // }
-
-    // @Override
-    // public int getUsersCount(RealmModel realm, String search, Set<String> groupIds) {
-    //     return UserQueryProvider.super.getUsersCount(realm, search, groupIds);
-    // }
-
     @Override
     public int getUsersCount(RealmModel realm, Map<String, String> params) {
         return UserQueryProvider.super.getUsersCount(realm, params);
@@ -232,4 +229,5 @@ public class CustomerStorageProvider implements
     public int getUsersCount(RealmModel realm, boolean includeServiceAccount) {
         return UserQueryProvider.super.getUsersCount(realm, includeServiceAccount);
     }
+
 }
