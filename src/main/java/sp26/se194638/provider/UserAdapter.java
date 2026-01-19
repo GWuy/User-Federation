@@ -4,28 +4,22 @@ import org.keycloak.component.ComponentModel;
 import org.keycloak.models.*;
 import org.keycloak.storage.StorageId;
 import org.keycloak.storage.adapter.AbstractUserAdapterFederatedStorage;
-import sp26.se194638.model.User;
+import sp26.se194638.model.Account;
 
 import java.util.stream.Stream;
 
 public class UserAdapter extends AbstractUserAdapterFederatedStorage {
 
-    private final User user;
+    private final Account account;
     private final String id;
 
     public UserAdapter(KeycloakSession session,
                        RealmModel realm,
                        ComponentModel model,
-                       User user) {
+                       Account account) {
         super(session, realm, model);
-        this.user = user;
-        this.id = StorageId.keycloakId(model, user.getId().toString());
-
-        setUsername(user.getUserName());
-        setFirstName(user.getFirstName());
-        setLastName(user.getLastName());
-        setEmail(user.getEmail());
-        setEnabled(user.getActive() == 1);
+        this.account = account;
+        this.id = StorageId.keycloakId(model, account.getId().toString());
     }
 
     @Override
@@ -35,17 +29,32 @@ public class UserAdapter extends AbstractUserAdapterFederatedStorage {
 
     @Override
     public String getUsername() {
-        return user.getUserName();
+        return account.getUsername();
     }
 
     @Override
-    public void setUsername(String s) {
+    public void setUsername(String username) {
 
     }
 
     @Override
     public boolean isEnabled() {
-        return user.getActive() == 1;
+        return "ACTIVE".equalsIgnoreCase(account.getStatus());
+    }
+
+    @Override
+    public String getFirstName() {
+        return null;
+    }
+
+    @Override
+    public String getLastName() {
+        return null;
+    }
+
+    @Override
+    public String getEmail() {
+        return null;
     }
 
     @Override

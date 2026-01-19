@@ -2,23 +2,20 @@ package sp26.se194638.provider;
 
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.TypedQuery;
+import lombok.Getter;
+import lombok.Setter;
 import lombok.extern.slf4j.Slf4j;
 import org.keycloak.component.ComponentModel;
 import org.keycloak.credential.CredentialInput;
 import org.keycloak.credential.CredentialInputValidator;
 import org.keycloak.credential.hash.PasswordHashProvider;
-import org.keycloak.credential.hash.Pbkdf2PasswordHashProvider;
 import org.keycloak.models.*;
 import org.keycloak.models.credential.PasswordCredentialModel;
 import org.keycloak.storage.StorageId;
 import org.keycloak.storage.UserStorageProvider;
 import org.keycloak.storage.user.UserLookupProvider;
 import org.keycloak.storage.user.UserQueryProvider;
-
-import lombok.Getter;
-import lombok.Setter;
-import org.mindrot.jbcrypt.BCrypt;
-import sp26.se194638.model.User;
+import sp26.se194638.model.Account;
 
 import java.util.Map;
 import java.util.Set;
@@ -31,44 +28,32 @@ public class CustomerStorageProvider implements
         UserStorageProvider,
         UserLookupProvider,
         UserQueryProvider,
-        CredentialInputValidator{
+        CredentialInputValidator {
 
     private EntityManager em;
     private ComponentModel model;
     private KeycloakSession session;
 
-    public CustomerStorageProvider() {
-    }
-
-    public CustomerStorageProvider(EntityManager em,
-            ComponentModel model,
-            KeycloakSession session) {
-        this.em = em;
-        this.model = model;
-        this.session = session;
-    }
-
     @Override
     public void close() {
-        // không đóng EntityManager ở đây nếu dùng container-managed
     }
 
     @Override
     public UserModel getUserById(RealmModel realm, String id) {
-        Long userId = Long.valueOf(StorageId.externalId(id));
-        User user = em.find(User.class, userId);
-        return user == null ? null : new UserAdapter(session, realm, model, user);
+        Long accountId = Long.valueOf(StorageId.externalId(id));
+        Account account = em.find(Account.class, accountId);
+        return account == null ? null : new UserAdapter(session, realm, model, account);
     }
 
     @Override
     public UserModel getUserByUsername(RealmModel realm, String username) {
-        TypedQuery<User> q = em.createQuery(
-                "select u from User u where u.userName = :u", User.class);
+        TypedQuery<Account> q = em.createQuery(
+                "select a from Account a where a.username = :u", Account.class);
         q.setParameter("u", username);
 
         return q.getResultStream()
                 .findFirst()
-                .map(u -> new UserAdapter(session, realm, model, u))
+                .map(a -> new UserAdapter(session, realm, model, a))
                 .orElse(null);
     }
 
@@ -79,14 +64,17 @@ public class CustomerStorageProvider implements
 
     @Override
     public UserModel getUserByEmail(RealmModel realm, String email) {
-        TypedQuery<User> q = em.createQuery(
-                "select u from User u where u.email = :e", User.class);
-        q.setParameter("e", email);
+        return null; // Account không có email → OK
+    }
 
-        return q.getResultStream()
-                .findFirst()
-                .map(u -> new UserAdapter(session, realm, model, u))
-                .orElse(null);
+    @Override
+    public Stream<UserModel> searchForUserStream(RealmModel realm, String search) {
+        return UserQueryProvider.super.searchForUserStream(realm, search);
+    }
+
+    @Override
+    public Stream<UserModel> searchForUserStream(RealmModel realm, String search, Integer firstResult, Integer maxResults) {
+        return UserQueryProvider.super.searchForUserStream(realm, search, firstResult, maxResults);
     }
 
     @Override
@@ -103,18 +91,16 @@ public class CustomerStorageProvider implements
 
         String search = params.getOrDefault("search", "");
 
-        TypedQuery<User> q = em.createQuery(
-                "select u from User u where u.userName like :s or u.email like :s",
-                User.class);
+        TypedQuery<Account> q = em.createQuery(
+                "select a from Account a where a.username like :s",
+                Account.class);
         q.setParameter("s", "%" + search + "%");
 
-        if (first != null)
-            q.setFirstResult(first);
-        if (max != null)
-            q.setMaxResults(max);
+        if (first != null) q.setFirstResult(first);
+        if (max != null) q.setMaxResults(max);
 
         return q.getResultStream()
-                .map(u -> new UserAdapter(session, realm, model, u));
+                .map(a -> new UserAdapter(session, realm, model, a));
     }
 
     @Override
@@ -123,14 +109,12 @@ public class CustomerStorageProvider implements
     }
 
     @Override
-    public Stream<UserModel> getGroupMembersStream(RealmModel realmModel, GroupModel groupModel, Integer integer,
-            Integer integer1) {
+    public Stream<UserModel> getGroupMembersStream(RealmModel realm, GroupModel group, Integer firstResult, Integer maxResults) {
         return Stream.empty();
     }
 
     @Override
-    public Stream<UserModel> getGroupMembersStream(RealmModel realm, GroupModel group, String search, Boolean exact,
-            Integer first, Integer max) {
+    public Stream<UserModel> getGroupMembersStream(RealmModel realm, GroupModel group, String search, Boolean exact, Integer first, Integer max) {
         return UserQueryProvider.super.getGroupMembersStream(realm, group, search, exact, first, max);
     }
 
@@ -140,13 +124,12 @@ public class CustomerStorageProvider implements
     }
 
     @Override
-    public Stream<UserModel> getRoleMembersStream(RealmModel realm, RoleModel role, Integer firstResult,
-            Integer maxResults) {
+    public Stream<UserModel> getRoleMembersStream(RealmModel realm, RoleModel role, Integer firstResult, Integer maxResults) {
         return UserQueryProvider.super.getRoleMembersStream(realm, role, firstResult, maxResults);
     }
 
     @Override
-    public Stream<UserModel> searchForUserByUserAttributeStream(RealmModel realmModel, String s, String s1) {
+    public Stream<UserModel> searchForUserByUserAttributeStream(RealmModel realm, String attrName, String attrValue) {
         return Stream.empty();
     }
 
@@ -164,27 +147,22 @@ public class CustomerStorageProvider implements
 
     @Override
     public boolean isValid(RealmModel realm, UserModel user, CredentialInput input) {
-        if (!supportsCredentialType(input.getType())) {
-            return false;
-        }
+        if (!supportsCredentialType(input.getType())) return false;
 
-        Long userId = Long.valueOf(StorageId.externalId(user.getId()));
-        User dbUser = em.find(User.class, userId);
+        Long accountId = Long.valueOf(StorageId.externalId(user.getId()));
+        Account account = em.find(Account.class, accountId);
 
-        if (dbUser == null || dbUser.getPassword() == null) {
-            return false;
-        }
+        if (account == null || account.getPasswordHash() == null) return false;
 
         PasswordHashProvider php =
                 session.getProvider(PasswordHashProvider.class, "bcrypt");
 
-        // tạo credential model từ password hash trong DB
         PasswordCredentialModel pcm =
                 PasswordCredentialModel.createFromValues(
                         "bcrypt",
                         null,
                         -1,
-                        dbUser.getPassword()
+                        account.getPasswordHash()
                 );
 
         return php.verify(input.getChallengeResponse(), pcm);
@@ -216,6 +194,16 @@ public class CustomerStorageProvider implements
     }
 
     @Override
+    public int getUsersCount(RealmModel realm, String search) {
+        return UserQueryProvider.super.getUsersCount(realm, search);
+    }
+
+    @Override
+    public int getUsersCount(RealmModel realm, String search, Set<String> groupIds) {
+        return UserQueryProvider.super.getUsersCount(realm, search, groupIds);
+    }
+
+    @Override
     public int getUsersCount(RealmModel realm, Map<String, String> params) {
         return UserQueryProvider.super.getUsersCount(realm, params);
     }
@@ -229,5 +217,4 @@ public class CustomerStorageProvider implements
     public int getUsersCount(RealmModel realm, boolean includeServiceAccount) {
         return UserQueryProvider.super.getUsersCount(realm, includeServiceAccount);
     }
-
 }
